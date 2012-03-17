@@ -1,16 +1,304 @@
 <?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
 
-  <title><![CDATA[My Octopress Blog]]></title>
+  <title><![CDATA[Bash Manor]]></title>
   <link href="http://tbashore.github.com/atom.xml" rel="self"/>
   <link href="http://tbashore.github.com/"/>
-  <updated>2012-02-04T18:54:04-05:00</updated>
+  <updated>2012-03-17T19:12:18-04:00</updated>
   <id>http://tbashore.github.com/</id>
   <author>
-    <name><![CDATA[Your Name]]></name>
+    <name><![CDATA[Tyson Bashore]]></name>
     
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Find Gaps in Data]]></title>
+    <link href="http://tbashore.github.com/blog/2012/03/10/find-gaps-in-data/"/>
+    <updated>2012-03-10T08:33:00-05:00</updated>
+    <id>http://tbashore.github.com/blog/2012/03/10/find-gaps-in-data</id>
+    <content type="html"><![CDATA[<p>I recently had a project where data was reported missing.  The records in the system were replicated according to a schedule (e. g. quarterly, monthly), but some of the instances had gone missing (possibly by a bug in an automated cleanup process) and I was tasked with filling in the gaps.  If I was to fill in the gaps I would need to find the gaps first.  Yet there were many thousands of records in the table, so a manual search was out of the question.</p>
+
+<figure class='code'><figcaption><span>Example of quarterly records with missing instances</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="o">|</span> <span class="n">due_date</span>   <span class="o">|</span>
+</span><span class='line'><span class="c1">--------------</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">03</span><span class="o">-</span><span class="mi">07</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">06</span><span class="o">-</span><span class="mi">06</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">12</span><span class="o">-</span><span class="mi">05</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">03</span><span class="o">-</span><span class="mi">05</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span> <span class="o">|</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In the example above, you&#8217;ll notice a pattern where each date is roughly three months from the previous, with the exception of two dates that have been skipped: September 2011 and June 2012.  Clearly I needed some way to recognize such a pattern with a query.</p>
+
+<p>After a few moments of thought I realized that I usually use an outer join to find missing data (nulls).  What I needed was a list of dates that probably had existed, so that I could join it with the list of existing dates to find the gaps.  I started by creating a <a href="http://www.google.com/">tally table</a> of increments that I would need to generate a periodic list of dates:</p>
+
+<figure class='code'><figcaption><span>Tally table</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="k">DECLARE</span> <span class="o">@</span><span class="n">inc</span> <span class="k">TABLE</span> <span class="p">(</span>
+</span><span class='line'>  <span class="n">i</span> <span class="nb">INT</span>
+</span><span class='line'><span class="p">);</span>
+</span><span class='line'><span class="k">WITH</span> <span class="n">Inc</span> <span class="k">AS</span> <span class="p">(</span>
+</span><span class='line'>  <span class="k">SELECT</span> <span class="mi">0</span> <span class="k">AS</span> <span class="n">i</span>
+</span><span class='line'>  <span class="k">UNION</span> <span class="k">ALL</span>
+</span><span class='line'>  <span class="k">SELECT</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="k">AS</span> <span class="n">i</span> <span class="k">FROM</span> <span class="n">Inc</span> <span class="k">WHERE</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">12</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'><span class="k">INSERT</span> <span class="k">INTO</span> <span class="o">@</span><span class="n">inc</span>
+</span><span class='line'><span class="k">SELECT</span> <span class="n">i</span> <span class="k">FROM</span> <span class="n">Inc</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">SELECT</span> <span class="n">i</span> <span class="k">FROM</span> <span class="o">@</span><span class="n">inc</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">|</span> <span class="n">i</span>  <span class="o">|</span>
+</span><span class='line'><span class="c1">------</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">0</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">1</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">2</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">3</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">4</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">5</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">6</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">7</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">8</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">9</span>  <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">10</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">11</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="mi">12</span> <span class="o">|</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then I took the most recent instance of an existing record and subtracted each of the increments from it to get the probable history of dates:</p>
+
+<figure class='code'><figcaption><span>Probable dates</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="k">SELECT</span>
+</span><span class='line'>    <span class="n">r</span><span class="p">.</span><span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>    <span class="k">MAX</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">due_date</span><span class="p">)</span> <span class="k">AS</span> <span class="n">max_due_date</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">DATEADD</span><span class="p">(</span><span class="k">month</span><span class="p">,</span> <span class="o">-</span><span class="mi">3</span> <span class="o">*</span> <span class="n">i</span><span class="p">.</span><span class="n">i</span><span class="p">,</span> <span class="k">MAX</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">due_date</span><span class="p">))</span> <span class="k">AS</span> <span class="n">probable_due_date</span>
+</span><span class='line'><span class="k">FROM</span>
+</span><span class='line'>    <span class="n">records</span> <span class="n">r</span><span class="p">,</span>
+</span><span class='line'>    <span class="o">@</span><span class="n">inc</span> <span class="n">i</span>
+</span><span class='line'><span class="k">GROUP</span> <span class="k">BY</span>
+</span><span class='line'>    <span class="n">r</span><span class="p">.</span><span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">i</span><span class="p">.</span><span class="n">i</span>
+</span><span class='line'><span class="k">HAVING</span> <span class="n">DATEADD</span><span class="p">(</span><span class="k">month</span><span class="p">,</span> <span class="o">-</span><span class="mi">3</span> <span class="o">*</span> <span class="n">i</span><span class="p">.</span><span class="n">i</span><span class="p">,</span> <span class="k">MAX</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">due_date</span><span class="p">))</span> <span class="o">&gt;=</span> <span class="s1">&#39;2011-01-01&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">|</span> <span class="n">task_name</span> <span class="o">|</span> <span class="n">max_due_date</span> <span class="o">|</span> <span class="n">probable_due_date</span> <span class="o">|</span>
+</span><span class='line'><span class="c1">------------------------------------------------</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>   <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>   <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">06</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>   <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">03</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>   <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">12</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>   <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>   <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">06</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>   <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">03</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>   <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>   <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">05</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>   <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">02</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>   <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">11</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>   <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>   <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">05</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>I can take this list of probable dates and perform an outer join with the actual dates, and any resulting row with a null due date is one that is missing.  Of course, an exact join will not work because there is some variability in the scheduling.  That is, the day of the month changes because the day of the week is fixed.  So, I will add a margin of plus or minus one week.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="k">SELECT</span>
+</span><span class='line'>    <span class="n">pr</span><span class="p">.</span><span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">pr</span><span class="p">.</span><span class="n">probable_due_date</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">r</span><span class="p">.</span><span class="n">due_date</span>
+</span><span class='line'><span class="k">FROM</span> <span class="p">(</span>
+</span><span class='line'>    <span class="k">SELECT</span>
+</span><span class='line'>        <span class="n">r</span><span class="p">.</span><span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>        <span class="k">MAX</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">due_date</span><span class="p">)</span> <span class="k">AS</span> <span class="n">max_due_date</span><span class="p">,</span>
+</span><span class='line'>        <span class="n">DATEADD</span><span class="p">(</span><span class="k">month</span><span class="p">,</span> <span class="o">-</span><span class="mi">3</span> <span class="o">*</span> <span class="n">i</span><span class="p">.</span><span class="n">i</span><span class="p">,</span> <span class="k">MAX</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">due_date</span><span class="p">))</span> <span class="k">AS</span> <span class="n">probable_due_date</span>
+</span><span class='line'>    <span class="k">FROM</span>
+</span><span class='line'>        <span class="n">records</span> <span class="n">r</span><span class="p">,</span>
+</span><span class='line'>        <span class="o">@</span><span class="n">inc</span> <span class="n">i</span>
+</span><span class='line'>    <span class="k">GROUP</span> <span class="k">BY</span>
+</span><span class='line'>        <span class="n">r</span><span class="p">.</span><span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>        <span class="n">i</span><span class="p">.</span><span class="n">i</span>
+</span><span class='line'>  <span class="p">)</span> <span class="n">pr</span> <span class="k">LEFT</span> <span class="k">OUTER</span> <span class="k">JOIN</span>
+</span><span class='line'>  <span class="n">records</span> <span class="n">r</span> <span class="k">ON</span>
+</span><span class='line'>      <span class="n">r</span><span class="p">.</span><span class="n">due_date</span> <span class="o">&gt;=</span> <span class="n">DATEADD</span><span class="p">(</span><span class="n">week</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">pr</span><span class="p">.</span><span class="n">probable_due_date</span><span class="p">)</span> <span class="k">AND</span>
+</span><span class='line'>      <span class="n">r</span><span class="p">.</span><span class="n">due_date</span> <span class="o">&lt;=</span> <span class="n">DATEADD</span><span class="p">(</span><span class="n">week</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">pr</span><span class="p">.</span><span class="n">probable_due_date</span><span class="p">)</span>
+</span><span class='line'><span class="k">WHERE</span> <span class="n">pr</span><span class="p">.</span><span class="n">probable_due_date</span> <span class="o">&gt;=</span> <span class="s1">&#39;2011-01-01&#39;</span>
+</span><span class='line'><span class="k">ORDER</span> <span class="k">BY</span>
+</span><span class='line'>  <span class="n">pr</span><span class="p">.</span><span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>  <span class="n">pr</span><span class="p">.</span><span class="n">probable_due_date</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">r</span><span class="p">.</span><span class="n">due_date</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">|</span> <span class="n">task_name</span> <span class="o">|</span> <span class="n">probable_due_date</span> <span class="o">|</span> <span class="n">due_date</span>   <span class="o">|</span>
+</span><span class='line'><span class="c1">----------------------------------------------</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">03</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">03</span><span class="o">-</span><span class="mi">07</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">06</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">06</span><span class="o">-</span><span class="mi">06</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span> <span class="k">NULL</span>       <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">12</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">12</span><span class="o">-</span><span class="mi">05</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">03</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">03</span><span class="o">-</span><span class="mi">05</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">06</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span> <span class="k">NULL</span>       <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">1</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span>        <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">09</span><span class="o">-</span><span class="mi">03</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">02</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">02</span><span class="o">-</span><span class="mi">11</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">05</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">05</span><span class="o">-</span><span class="mi">13</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span> <span class="k">NULL</span>       <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2011</span><span class="o">-</span><span class="mi">11</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span> <span class="k">NULL</span>       <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">02</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">02</span><span class="o">-</span><span class="mi">10</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">05</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">05</span><span class="o">-</span><span class="mi">11</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Task</span> <span class="mi">2</span>    <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span>        <span class="o">|</span> <span class="mi">2012</span><span class="o">-</span><span class="mi">08</span><span class="o">-</span><span class="mi">10</span> <span class="o">|</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Great! We found the gaps.  All that is left is to fill in the gaps with an insert.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="k">INSERT</span> <span class="k">INTO</span> <span class="n">records</span> <span class="p">(</span>
+</span><span class='line'>    <span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">due_date</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'><span class="k">SELECT</span>
+</span><span class='line'>    <span class="n">pr</span><span class="p">.</span><span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">DATEADD</span><span class="p">(</span><span class="k">day</span><span class="p">,</span> <span class="n">DATEPART</span><span class="p">(</span><span class="n">dw</span><span class="p">,</span> <span class="n">pr</span><span class="p">.</span><span class="n">max_due_date</span><span class="p">)</span> <span class="o">-</span> <span class="n">DATEPART</span><span class="p">(</span><span class="n">dw</span><span class="p">,</span> <span class="n">pr</span><span class="p">.</span><span class="n">probable_due_date</span><span class="p">),</span> <span class="n">pr</span><span class="p">.</span><span class="n">probable_due_date</span><span class="p">)</span>
+</span><span class='line'><span class="k">FROM</span> <span class="p">(</span>
+</span><span class='line'>    <span class="k">SELECT</span>
+</span><span class='line'>        <span class="n">r</span><span class="p">.</span><span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>        <span class="k">MAX</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">due_date</span><span class="p">)</span> <span class="k">AS</span> <span class="n">max_due_date</span><span class="p">,</span>
+</span><span class='line'>        <span class="n">DATEADD</span><span class="p">(</span><span class="k">month</span><span class="p">,</span> <span class="o">-</span><span class="mi">3</span> <span class="o">*</span> <span class="n">i</span><span class="p">.</span><span class="n">i</span><span class="p">,</span> <span class="k">MAX</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">due_date</span><span class="p">))</span> <span class="k">AS</span> <span class="n">probable_due_date</span>
+</span><span class='line'>    <span class="k">FROM</span>
+</span><span class='line'>        <span class="n">records</span> <span class="n">r</span><span class="p">,</span>
+</span><span class='line'>        <span class="o">@</span><span class="n">inc</span> <span class="n">i</span>
+</span><span class='line'>    <span class="k">GROUP</span> <span class="k">BY</span>
+</span><span class='line'>        <span class="n">r</span><span class="p">.</span><span class="n">task_name</span><span class="p">,</span>
+</span><span class='line'>        <span class="n">i</span><span class="p">.</span><span class="n">i</span>
+</span><span class='line'>  <span class="p">)</span> <span class="n">pr</span> <span class="k">LEFT</span> <span class="k">OUTER</span> <span class="k">JOIN</span>
+</span><span class='line'>  <span class="n">records</span> <span class="n">r</span> <span class="k">ON</span>
+</span><span class='line'>      <span class="n">r</span><span class="p">.</span><span class="n">due_date</span> <span class="o">&gt;=</span> <span class="n">DATEADD</span><span class="p">(</span><span class="n">week</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">pr</span><span class="p">.</span><span class="n">probable_due_date</span><span class="p">)</span> <span class="k">AND</span>
+</span><span class='line'>      <span class="n">r</span><span class="p">.</span><span class="n">due_date</span> <span class="o">&lt;=</span> <span class="n">DATEADD</span><span class="p">(</span><span class="n">week</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">pr</span><span class="p">.</span><span class="n">probable_due_date</span><span class="p">)</span>
+</span><span class='line'><span class="k">WHERE</span> <span class="n">r</span><span class="p">.</span><span class="n">due_date</span> <span class="k">IS</span> <span class="k">NULL</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Here is a <a href="http://www.sqlfiddle.com/#!3/eb1d0/1">SQL Fiddle</a> that demonstrates the techniques from this post.</p>
+]]></content>
+  </entry>
   
 </feed>

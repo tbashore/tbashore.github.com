@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: SQL | Bash Manor]]></title>
+  <link href="http://tbashore.github.com/blog/categories/sql/atom.xml" rel="self"/>
+  <link href="http://tbashore.github.com/"/>
+  <updated>2012-03-17T19:12:18-04:00</updated>
+  <id>http://tbashore.github.com/</id>
+  <author>
+    <name><![CDATA[Tyson Bashore]]></name>
+    
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Find Gaps in Data]]></title>
+    <link href="http://tbashore.github.com/blog/2012/03/10/find-gaps-in-data/"/>
+    <updated>2012-03-10T08:33:00-05:00</updated>
+    <id>http://tbashore.github.com/blog/2012/03/10/find-gaps-in-data</id>
+    <content type="html"><![CDATA[<p>I recently had a project where data was reported missing.  The records in the system were replicated according to a schedule (e. g. quarterly, monthly), but some of the instances had gone missing (possibly by a bug in an automated cleanup process) and I was tasked with filling in the gaps.  If I was to fill in the gaps I would need to find the gaps first.  Yet there were many thousands of records in the table, so a manual search was out of the question.</p>
+
+<p>``` sql Example of quarterly records with missing instances</p>
+
+<h2>| due_date   |</h2>
+
+<p>| 2011-03-07 |
+| 2011-06-06 |
+| 2011-12-05 |
+| 2012-03-05 |
+| 2012-09-03 |</p>
+
+<p>```</p>
+
+<p>In the example above, you'll notice a pattern where each date is roughly three months from the previous, with the exception of two dates that have been skipped: September 2011 and June 2012.  Clearly I needed some way to recognize such a pattern with a query.</p>
+
+<p>After a few moments of thought I realized that I usually use an outer join to find missing data (nulls).  What I needed was a list of dates that probably had existed, so that I could join it with the list of existing dates to find the gaps.  I started by creating a <a href="http://www.google.com/">tally table</a> of increments that I would need to generate a periodic list of dates:</p>
+
+<p>``` sql Tally table</p>
+
+<p>DECLARE @inc TABLE (</p>
+
+<pre><code>i INT
+</code></pre>
+
+<p>);
+WITH Inc AS (</p>
+
+<pre><code>SELECT 0 AS i
+UNION ALL
+SELECT i + 1 AS i FROM Inc WHERE i &lt; 12
+</code></pre>
+
+<p>)
+INSERT INTO @inc
+SELECT i FROM Inc</p>
+
+<p>SELECT i FROM @inc</p>
+
+<h2>| i  |</h2>
+
+<p>| 0  |
+| 1  |
+| 2  |
+| 3  |
+| 4  |
+| 5  |
+| 6  |
+| 7  |
+| 8  |
+| 9  |
+| 10 |
+| 11 |
+| 12 |</p>
+
+<p>```</p>
+
+<p>Then I took the most recent instance of an existing record and subtracted each of the increments from it to get the probable history of dates:</p>
+
+<p>``` sql Probable dates</p>
+
+<p>SELECT</p>
+
+<pre><code>r.task_name,
+MAX(r.due_date) AS max_due_date,
+DATEADD(month, -3 * i.i, MAX(r.due_date)) AS probable_due_date
+</code></pre>
+
+<p>FROM</p>
+
+<pre><code>records r,
+@inc i
+</code></pre>
+
+<p>GROUP BY</p>
+
+<pre><code>r.task_name,
+i.i
+</code></pre>
+
+<p>HAVING DATEADD(month, -3 * i.i, MAX(r.due_date)) >= '2011-01-01'</p>
+
+<h2>| task_name | max_due_date | probable_due_date |</h2>
+
+<p>| Task 1    | 2012-09-03   | 2012-09-03        |
+| Task 1    | 2012-09-03   | 2012-06-03        |
+| Task 1    | 2012-09-03   | 2012-03-03        |
+| Task 1    | 2012-09-03   | 2011-12-03        |
+| Task 1    | 2012-09-03   | 2011-09-03        |
+| Task 1    | 2012-09-03   | 2011-06-03        |
+| Task 1    | 2012-09-03   | 2011-03-03        |
+| Task 2    | 2012-08-10   | 2012-08-10        |
+| Task 2    | 2012-08-10   | 2012-05-10        |
+| Task 2    | 2012-08-10   | 2012-02-10        |
+| Task 2    | 2012-08-10   | 2011-11-10        |
+| Task 2    | 2012-08-10   | 2011-08-10        |
+| Task 2    | 2012-08-10   | 2011-05-10        |</p>
+
+<p>```</p>
+
+<p>I can take this list of probable dates and perform an outer join with the actual dates, and any resulting row with a null due date is one that is missing.  Of course, an exact join will not work because there is some variability in the scheduling.  That is, the day of the month changes because the day of the week is fixed.  So, I will add a margin of plus or minus one week.</p>
+
+<p>``` sql</p>
+
+<p>SELECT</p>
+
+<pre><code>pr.task_name,
+pr.probable_due_date,
+r.due_date
+</code></pre>
+
+<p>FROM (</p>
+
+<pre><code>SELECT
+    r.task_name,
+    MAX(r.due_date) AS max_due_date,
+    DATEADD(month, -3 * i.i, MAX(r.due_date)) AS probable_due_date
+FROM
+    records r,
+    @inc i
+GROUP BY
+    r.task_name,
+    i.i
+) pr LEFT OUTER JOIN
+records r ON
+    r.due_date &gt;= DATEADD(week, -1, pr.probable_due_date) AND
+    r.due_date &lt;= DATEADD(week, 1, pr.probable_due_date)
+</code></pre>
+
+<p>WHERE pr.probable_due_date >= '2011-01-01'
+ORDER BY</p>
+
+<pre><code>pr.task_name,
+pr.probable_due_date,
+r.due_date
+</code></pre>
+
+<h2>| task_name | probable_due_date | due_date   |</h2>
+
+<p>| Task 1    | 2011-03-03        | 2011-03-07 |
+| Task 1    | 2011-06-03        | 2011-06-06 |
+| Task 1    | 2011-09-03        | NULL       |
+| Task 1    | 2011-12-03        | 2011-12-05 |
+| Task 1    | 2012-03-03        | 2012-03-05 |
+| Task 1    | 2012-06-03        | NULL       |
+| Task 1    | 2012-09-03        | 2012-09-03 |
+| Task 2    | 2011-02-10        | 2011-02-11 |
+| Task 2    | 2011-05-10        | 2011-05-13 |
+| Task 2    | 2011-08-10        | NULL       |
+| Task 2    | 2011-11-10        | NULL       |
+| Task 2    | 2012-02-10        | 2012-02-10 |
+| Task 2    | 2012-05-10        | 2012-05-11 |
+| Task 2    | 2012-08-10        | 2012-08-10 |</p>
+
+<p>```</p>
+
+<p>Great! We found the gaps.  All that is left is to fill in the gaps with an insert.</p>
+
+<p>``` sql</p>
+
+<p>INSERT INTO records (</p>
+
+<pre><code>task_name,
+due_date
+</code></pre>
+
+<p>)
+SELECT</p>
+
+<pre><code>pr.task_name,
+DATEADD(day, DATEPART(dw, pr.max_due_date) - DATEPART(dw, pr.probable_due_date), pr.probable_due_date)
+</code></pre>
+
+<p>FROM (</p>
+
+<pre><code>SELECT
+    r.task_name,
+    MAX(r.due_date) AS max_due_date,
+    DATEADD(month, -3 * i.i, MAX(r.due_date)) AS probable_due_date
+FROM
+    records r,
+    @inc i
+GROUP BY
+    r.task_name,
+    i.i
+) pr LEFT OUTER JOIN
+records r ON
+    r.due_date &gt;= DATEADD(week, -1, pr.probable_due_date) AND
+    r.due_date &lt;= DATEADD(week, 1, pr.probable_due_date)
+</code></pre>
+
+<p>WHERE r.due_date IS NULL</p>
+
+<p>```</p>
+
+<p>Here is a <a href="http://www.sqlfiddle.com/#!3/eb1d0/1">SQL Fiddle</a> that demonstrates the techniques from this post.</p>
+]]></content>
+  </entry>
+  
+</feed>
