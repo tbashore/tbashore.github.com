@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Code | Bash Manor]]></title>
   <link href="http://tbashore.github.com/blog/categories/code/atom.xml" rel="self"/>
   <link href="http://tbashore.github.com/"/>
-  <updated>2012-03-17T19:12:18-04:00</updated>
+  <updated>2012-03-17T19:14:11-04:00</updated>
   <id>http://tbashore.github.com/</id>
   <author>
     <name><![CDATA[Tyson Bashore]]></name>
@@ -15,9 +15,9 @@
   
   <entry>
     <title type="html"><![CDATA[Find Gaps in Data]]></title>
-    <link href="http://tbashore.github.com/blog/2012/03/10/find-gaps-in-data/"/>
-    <updated>2012-03-10T08:33:00-05:00</updated>
-    <id>http://tbashore.github.com/blog/2012/03/10/find-gaps-in-data</id>
+    <link href="http://tbashore.github.com/blog/2012/03/17/find-gaps-in-data/"/>
+    <updated>2012-03-17T08:33:00-04:00</updated>
+    <id>http://tbashore.github.com/blog/2012/03/17/find-gaps-in-data</id>
     <content type="html"><![CDATA[<p>I recently had a project where data was reported missing.  The records in the system were replicated according to a schedule (e. g. quarterly, monthly), but some of the instances had gone missing (possibly by a bug in an automated cleanup process) and I was tasked with filling in the gaps.  If I was to fill in the gaps I would need to find the gaps first.  Yet there were many thousands of records in the table, so a manual search was out of the question.</p>
 
 <p>``` sql Example of quarterly records with missing instances</p>
